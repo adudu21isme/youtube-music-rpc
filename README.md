@@ -3,6 +3,9 @@ Since youtube does not seem to have a rich presence feature, i created this work
 
 If Youtube Music ever has a rich presence feature then this repository will be archived.
 
+> [!WARNING]
+> This script assumes that you only use 1 tab for listening to songs on Youtube Music. Having several songs playing at once with different youtube music tabs will cause issues with the RPC.
+
 ## How to install?
 > [!NOTE]
 > This assumes you have Python 3+ installed and are using systemd (creator of this repo uses [CachyOS](https://cachyos.org/) alongside [LibreWolf](https://www.librewolf.net/))
