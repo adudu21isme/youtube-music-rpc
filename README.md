@@ -15,7 +15,7 @@ If Youtube Music ever has a rich presence feature then this repository will be a
 > %h/Documents/ytmusic_bridge.py
 > ```
 > with the proper location to ytmusic_bridge.py
-4. Download [ytmusic-bridge.service](src/ytmusic-bridge.service) and, then, save it in `~/.config/systemd/user/`.
+4. Download [ytmusic-bridge.service](src/ytmusic-bridge.service) and save it in `~/.config/systemd/user/`.
 5. Run
 ```
 systemctl --user enable --now ytmusic-bridge.service
