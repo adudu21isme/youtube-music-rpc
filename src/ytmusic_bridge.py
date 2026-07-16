@@ -26,12 +26,9 @@ ACTIVITY_TYPE = ActivityType.LISTENING
 STATUS_DISPLAY_TYPE = StatusDisplayType.NAME
 PRESENCE_NAME = "YouTube Music"
 
-# Discord's Rich Presence IPC enforces a documented ~15s minimum interval
-# between SET_ACTIVITY calls, and rejects state/details over 128 chars with
-# a ServerError. pypresence is a thin, direct IPC client -- confirmed against
-# its installed source that it does not enforce either of these itself, so
-# both are handled here.
-MIN_UPDATE_INTERVAL_SECONDS = 15 # 15s
+# Discord's Rich Presence IPC rejects state/details over 128 chars with
+# a ServerError. pypresence is a thin, direct IPC client
+MIN_UPDATE_INTERVAL_SECONDS = 2 # 2s
 MAX_FIELD_LENGTH = 128
 
 # HTTP hardening
