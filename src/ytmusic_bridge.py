@@ -31,7 +31,7 @@ PRESENCE_NAME = "YouTube Music"
 # a ServerError. pypresence is a thin, direct IPC client -- confirmed against
 # its installed source that it does not enforce either of these itself, so
 # both are handled here.
-MIN_UPDATE_INTERVAL_SECONDS = 15.5 # 15s + jitter buffer
+MIN_UPDATE_INTERVAL_SECONDS = 15 # 15s
 MAX_FIELD_LENGTH = 128
 
 # HTTP hardening
