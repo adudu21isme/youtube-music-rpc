@@ -5,7 +5,7 @@ If Youtube Music ever has a rich presence feature then this repository will be a
 
 ## How to install?
 > [!NOTE]
-> This assumes you have Python 3+ installed and are using systemd (creator of this repo uses [CachyOS](https://cachyos.org/))
+> This assumes you have Python 3+ installed and are using systemd (creator of this repo uses [CachyOS](https://cachyos.org/) alongside [LibreWolf](https://www.librewolf.net/))
 1. Install [Tampermonkey](https://addons.mozilla.org/firefox/addon/tampermonkey/)
 2. Install the [tampermonkey_userscript](src/tampermonkey_script.js)
 3. Download [ytmusic_bridge.py](src/ytmusic_bridge.py) and save it somewhere convenient (this guide assumes `~/Documents`).
