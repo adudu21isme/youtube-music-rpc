@@ -193,7 +193,7 @@ def _apply_track(title, artist, album, artwork, paused, current_time, duration):
 
     if paused:
         if _presence_active:
-            log("Clearing presence (paused/close signal received).")
+            log("Clearing presence (paused).")
         _dispatch_update(lambda rpc: rpc.clear())
         _presence_active = False
         return
@@ -246,15 +246,11 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authorized(self, payload):
+    def _authorized(self):
         if not SHARED_SECRET:
             return True
         header_token = self.headers.get("X-Bridge-Token")
-        # navigator.sendBeacon() (the tab-close signal) can't set custom headers, so
-        # that request carries the token as a "token" field in the JSON body instead.
-        # Accept either.
-        body_token = payload.get("token") if isinstance(payload, dict) else None
-        if header_token == SHARED_SECRET or body_token == SHARED_SECRET:
+        if header_token == SHARED_SECRET:
             return True
         self._reply(403, {"error": "forbidden"})
         return False
@@ -265,11 +261,8 @@ class BridgeHandler(BaseHTTPRequestHandler):
             return
 
         content_type = self.headers.get("Content-Type", "")
-        # navigator.sendBeacon() (the tab-close signal -- see the userscript) can only
-        # use a CORS-safelisted Content-Type without triggering a preflight this server
-        # doesn't implement, so it sends text/plain; the body is JSON either way.
-        if content_type.split(";")[0].strip().lower() not in ("application/json", "text/plain"):
-            self._reply(415, {"error": "expected application/json or text/plain"})
+        if content_type.split(";")[0].strip().lower() != "application/json":
+            self._reply(415, {"error": "expected application/json"})
             return
 
         raw_length = self.headers.get("Content-Length")
@@ -301,7 +294,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._reply(400, {"error": "expected a json object"})
             return
 
-        if not self._authorized(payload):
+        if not self._authorized():
             return
 
         album_raw = payload.get("album")
