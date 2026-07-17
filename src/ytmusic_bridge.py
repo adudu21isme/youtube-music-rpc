@@ -203,8 +203,7 @@ def _apply_track(title, artist, album, artwork, paused, current_time, duration):
     end = start + duration if duration > 0 and math.isfinite(duration) else None
 
     title = _truncate(title)
-    # Spotify-style second line: "Artist — Album", or just "Artist" if no album.
-    state_text = _truncate(f"{artist} — {album}" if album else artist)
+    state_text = _truncate(artist)
 
     assets = {}
     if artwork:
