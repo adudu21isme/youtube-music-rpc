@@ -209,7 +209,8 @@ def _apply_track(title, artist, album, artwork, paused, current_time, duration):
     assets = {}
     if artwork:
         assets["large_image"] = artwork
-        assets["large_text"] = title
+        if album:
+            assets["large_text"] = _truncate(album)
 
     def do_update(rpc):
         rpc.update(
