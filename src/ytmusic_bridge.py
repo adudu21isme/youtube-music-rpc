@@ -2,6 +2,7 @@
 
 import fcntl
 import json
+import math
 import os
 import signal
 import socket
@@ -19,14 +20,14 @@ from pypresence.types import ActivityType, StatusDisplayType
 DISCORD_CLIENT_ID = "1526706535974305822"
 LISTEN_HOST = "127.0.0.1"
 LISTEN_PORT = 8765
-STALE_AFTER_SECONDS = 40 # clear presence if the browser goes quiet this long
+STALE_AFTER_SECONDS = 15 # clear presence if the browser goes quiet this long
 RECONNECT_DELAY_SECONDS = 5 # wait between retries while Discord isn't reachable
 
 ACTIVITY_TYPE = ActivityType.LISTENING
 STATUS_DISPLAY_TYPE = StatusDisplayType.NAME
 PRESENCE_NAME = "YouTube Music"
 
-# Discord's Rich Presence IPC rejects state/details over 128 chars with
+# Discord's Rich Presence IPC rejects state/details over 128 character with
 # a ServerError. pypresence is a thin, direct IPC client
 MIN_UPDATE_INTERVAL_SECONDS = 2 # 2s
 MAX_FIELD_LENGTH = 128
@@ -58,7 +59,7 @@ def log(msg: str) -> None:
     print(f"[{time.strftime('%H:%M:%S')}] {msg}", flush=True)
 
 def _truncate(text, limit=MAX_FIELD_LENGTH):
-    """Discord's IPC rejects state/details over 128 chars with a ServerError."""
+    """Discord's IPC rejects state/details over 128 characters with a ServerError."""
     if text is None:
         return None
     if len(text) <= limit:
@@ -112,7 +113,6 @@ def _connect():
                 pass
         log("Connected to Discord.")
         return rpc
-
 
 def _connector_thread():
     """Connects in the background so the HTTP server never blocks waiting on Discord."""
@@ -192,12 +192,17 @@ def _apply_track(title, artist, album, artwork, paused, current_time, duration):
     global _presence_active
 
     if paused:
+        if _presence_active:
+            log("Clearing presence (paused/close signal received).")
         _dispatch_update(lambda rpc: rpc.clear())
         _presence_active = False
         return
 
     start = time.time() - current_time
-    end = start + duration if duration > 0 else None
+    # int(float('inf')) raises OverflowError, so a non-finite duration (which a raw
+    # request to this endpoint could send even though the userscript no longer will)
+    # must not reach the int() call below.
+    end = start + duration if duration > 0 and math.isfinite(duration) else None
 
     title = _truncate(title)
     # Spotify-style second line: "Artist — Album", or just "Artist" if no album.
@@ -231,7 +236,7 @@ class BridgeHandler(BaseHTTPRequestHandler):
     timeout = REQUEST_TIMEOUT_SECONDS
 
     def log_message(self, format, *args):
-        pass  # keep stdout limited to our own log() lines
+        pass # keep stdout limited to our own log() lines
 
     def _reply(self, status, payload):
         body = json.dumps(payload).encode("utf-8")
@@ -241,25 +246,30 @@ class BridgeHandler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(body)
 
-    def _authorized(self):
+    def _authorized(self, payload):
         if not SHARED_SECRET:
             return True
-        if self.headers.get("X-Bridge-Token") != SHARED_SECRET:
-            self._reply(403, {"error": "forbidden"})
-            return False
-        return True
+        header_token = self.headers.get("X-Bridge-Token")
+        # navigator.sendBeacon() (the tab-close signal) can't set custom headers, so
+        # that request carries the token as a "token" field in the JSON body instead.
+        # Accept either.
+        body_token = payload.get("token") if isinstance(payload, dict) else None
+        if header_token == SHARED_SECRET or body_token == SHARED_SECRET:
+            return True
+        self._reply(403, {"error": "forbidden"})
+        return False
 
     def do_POST(self):
         if self.path != "/update":
             self._reply(404, {"error": "not found"})
             return
 
-        if not self._authorized():
-            return
-
         content_type = self.headers.get("Content-Type", "")
-        if content_type.split(";")[0].strip().lower() != "application/json":
-            self._reply(415, {"error": "expected application/json"})
+        # navigator.sendBeacon() (the tab-close signal -- see the userscript) can only
+        # use a CORS-safelisted Content-Type without triggering a preflight this server
+        # doesn't implement, so it sends text/plain; the body is JSON either way.
+        if content_type.split(";")[0].strip().lower() not in ("application/json", "text/plain"):
+            self._reply(415, {"error": "expected application/json or text/plain"})
             return
 
         raw_length = self.headers.get("Content-Length")
@@ -291,6 +301,9 @@ class BridgeHandler(BaseHTTPRequestHandler):
             self._reply(400, {"error": "expected a json object"})
             return
 
+        if not self._authorized(payload):
+            return
+
         album_raw = payload.get("album")
         artwork_raw = payload.get("artwork")
 
@@ -320,10 +333,11 @@ def _watchdog():
     """Clears a stale presence if the browser stops sending updates (tab/browser closed)."""
     global _presence_active
     while True:
-        time.sleep(5)
+        time.sleep(2)
         try:
             with _lock:
                 if _presence_active and time.time() - _last_update_at > STALE_AFTER_SECONDS:
+                    log(f"Clearing presence (watchdog: no update in {STALE_AFTER_SECONDS}s).")
                     _dispatch_update(lambda rpc: rpc.clear())
                     _presence_active = False
         except Exception as exc:
