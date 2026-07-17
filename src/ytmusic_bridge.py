@@ -192,8 +192,6 @@ def _apply_track(title, artist, album, artwork, paused, current_time, duration):
     global _presence_active
 
     if paused:
-        if _presence_active:
-            log("Clearing presence (paused).")
         _dispatch_update(lambda rpc: rpc.clear())
         _presence_active = False
         return
@@ -330,7 +328,7 @@ def _watchdog():
         try:
             with _lock:
                 if _presence_active and time.time() - _last_update_at > STALE_AFTER_SECONDS:
-                    log(f"Clearing presence (watchdog: no update in {STALE_AFTER_SECONDS}s).")
+                    #log(f"Clearing presence (watchdog: no update in {STALE_AFTER_SECONDS}s).")
                     _dispatch_update(lambda rpc: rpc.clear())
                     _presence_active = False
         except Exception as exc:
