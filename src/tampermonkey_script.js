@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YT Music RPC Bridge
 // @namespace    local.ytmusic-discord-bridge
-// @version      1.3
+// @version      1.4
 // @description  Sends now-playing info from YouTube Music to a local Python bridge for RPC
 // @match        https://music.youtube.com/*
 // @grant        GM_xmlhttpRequest
@@ -12,7 +12,9 @@
 
     const BRIDGE_URL = 'http://127.0.0.1:8765/update';
     const POLL_INTERVAL_MS = 3000; // safety-net poll for anything the listeners below miss
-    const HEARTBEAT_MS = 15000; // force a resync at least this often (safety net for drift)
+    const HEARTBEAT_MS = 5000; // force a resync at least this often -- combined with the bridge's
+                                 // own STALE_AFTER_SECONDS watchdog, this is what clears presence
+                                 // after the tab closes (there's no explicit close signal)
     const MIN_SEND_INTERVAL_MS = 2000; // mirrors the bridge's own SET_ACTIVITY rate limit
 
     // Must match SHARED_SECRET in ytmusic_bridge.py.
@@ -38,7 +40,7 @@
     }
 
     function post(payload) {
-        const headers = {'Content-Type': 'application/json'};
+        const headers = { 'Content-Type': 'application/json' };
         if (SHARED_SECRET) {
             headers['X-Bridge-Token'] = SHARED_SECRET;
         }
@@ -83,7 +85,12 @@
             artwork: state.artwork,
             paused: state.video.paused,
             currentTime: state.video.currentTime || 0,
-            duration: state.video.duration || 0,
+            // video.duration is Infinity or NaN while YT Music's MediaSource-backed
+            // player hasn't resolved the real track length yet (normal for the first
+            // moment or two after a track change). `|| 0` doesn't catch Infinity since
+            // Infinity is truthy -- send 0 (bridge/Discord already treat 0 as "unknown")
+            // instead of a non-finite number.
+            duration: Number.isFinite(state.video.duration) ? state.video.duration : 0,
         };
     }
 
@@ -146,9 +153,32 @@
     document.addEventListener('play', () => evaluate(false), true);
     document.addEventListener('pause', () => evaluate(false), true);
     document.addEventListener('loadedmetadata', () => evaluate(false), true);
+    // MediaSource-backed playback (what YT Music uses) commonly reports duration as
+    // Infinity/NaN right after a track change, then corrects it once enough of the
+    // stream has buffered -- 'durationchange' fires exactly then. force=true because
+    // title/artist/album/paused haven't changed at that point, so the normal check
+    // would otherwise miss it and leave Discord showing no length until the next
+    // heartbeat (up to 15s later) -- that's the "length doesn't show" bug.
+    document.addEventListener('durationchange', () => evaluate(true), true);
 
     // Catch whatever's already playing at inject time (e.g. script loads mid-song on a
     // page refresh) instead of waiting up to POLL_INTERVAL_MS for the first tick.
     evaluate(false);
     setInterval(() => evaluate(false), POLL_INTERVAL_MS);
+
+    // No explicit tab-close signal: pagehide/beforeunload-based detection (sendBeacon,
+    // GM_xmlhttpRequest) proved unreliable in practice, and beforeunload specifically
+    // disables Firefox's back-forward cache for every page load, not just the one being
+    // closed. The bridge's own STALE_AFTER_SECONDS watchdog already clears a stale
+    // presence once updates stop arriving, so closing the tab is handled there instead
+    // -- at the cost of a delay up to STALE_AFTER_SECONDS after the last heartbeat,
+    // rather than an instant signal.
+
+    // If the page is restored from the back-forward cache (navigated away and back,
+    // rather than actually closed), no updates were sent while it was cached, so the
+    // bridge's watchdog may have cleared the presence in the meantime. Force a fresh
+    // resync so playback comes back instead of staying cleared until the next heartbeat.
+    window.addEventListener('pageshow', (event) => {
+        if (event.persisted) evaluate(true);
+    });
 })();
