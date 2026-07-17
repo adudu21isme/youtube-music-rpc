@@ -1,4 +1,3 @@
-# Dont use this yet, it is W.I.P .
 # RPC for [Youtube Music](https://music.youtube.com)
 Since youtube does not seem to have a rich presence feature, i created this workaround and decided to publish it in case it helps others (i use [Vesktop btw](https://vesktop.dev/)).
 
