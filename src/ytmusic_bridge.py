@@ -24,7 +24,7 @@ STALE_AFTER_SECONDS = 15 # clear presence if the browser goes quiet this long
 RECONNECT_DELAY_SECONDS = 5 # wait between retries while Discord isn't reachable
 
 ACTIVITY_TYPE = ActivityType.LISTENING
-STATUS_DISPLAY_TYPE = StatusDisplayType.NAME
+STATUS_DISPLAY_TYPE = StatusDisplayType.DETAILS
 PRESENCE_NAME = "YouTube Music"
 
 # Discord's Rich Presence IPC rejects state/details over 128 character with
