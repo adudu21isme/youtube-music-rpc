@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         YT Music RPC Bridge
+// @name         Youtube Music RPC Bridge
 // @namespace    local.ytmusic-discord-bridge
-// @version      1.4
+// @version      1.5
 // @description  Sends now-playing info from YouTube Music to a local Python bridge for RPC
 // @match        https://music.youtube.com/*
 // @grant        GM_xmlhttpRequest
@@ -13,9 +13,22 @@
     const BRIDGE_URL = 'http://127.0.0.1:8765/update';
     const POLL_INTERVAL_MS = 3000; // safety-net poll for anything the listeners below miss
     const HEARTBEAT_MS = 5000; // force a resync at least this often -- combined with the bridge's
-                                 // own STALE_AFTER_SECONDS watchdog, this is what clears presence
-                                 // after the tab closes (there's no explicit close signal)
+                               // own STALE_AFTER_SECONDS watchdog, this is what clears presence
+                               // after the tab closes (there's no explicit close signal)
     const MIN_SEND_INTERVAL_MS = 2000; // mirrors the bridge's own SET_ACTIVITY rate limit
+    const PAUSE_DEBOUNCE_MS = 500; // YT Music's own track-switching briefly sets paused=true
+                                     // (pause -> swap source -> play) before the next track
+                                     // starts -- indistinguishable from a real pause at the
+                                     // instant it happens. Reporting it unconfirmed is the
+                                     // "Discord doesn't show what's actually playing after a
+                                     // quick skip" bug: the bridge clears presence on it, and
+                                     // recovery is then stuck behind the next MIN_SEND_INTERVAL_MS
+                                     // window (and can chain into another if a later transition's
+                                     // own blip lands inside that window too). Confirm a pause
+                                     // holds for this long before treating it as real. This is a
+                                     // deliberately generous margin, not a measured value -- a
+                                     // real pause reported 500ms late is imperceptible in Discord,
+                                     // so there's no cost to erring high here.
 
     // Must match SHARED_SECRET in ytmusic_bridge.py.
     const SHARED_SECRET = "YTBridge_M68QHRbRP0Tx3i$k7ro#C$7V@D5C^v9kKBsSq5$LNiQ=";
@@ -23,6 +36,12 @@
     let lastSent = { title: null, artist: null, album: null, paused: null };
     let lastSentAt = 0; // last time a request actually went out -- throttle + heartbeat reference
     let pendingTimer = null;
+    let confirmedPaused = false; // debounced paused state -- see updatePauseConfirmation(). This,
+                                 // never the raw video.paused reading, is what evaluate() and
+                                 // buildPayload() use, so a still-unconfirmed transient pause
+                                 // can't leak out through the throttle's own pending timer
+                                 // firing mid-blip and reading live state at the wrong instant.
+    let pauseDebounceTimer = null;
 
     function pickBestArtwork(artworkList) {
         if (!artworkList || !artworkList.length) return null;
@@ -83,7 +102,11 @@
             artist: state.artist,
             album: state.album,
             artwork: state.artwork,
-            paused: state.video.paused,
+            paused: confirmedPaused, // debounced -- see updatePauseConfirmation(). Deliberately
+                                     // not state.video.paused: this function is called both
+                                     // from an immediate send and from the throttle's own
+                                     // pending timer firing later, and both must be protected,
+                                     // not just the path evaluate() triggers directly.
             currentTime: state.video.currentTime || 0,
             // video.duration is Infinity or NaN while YT Music's MediaSource-backed
             // player hasn't resolved the real track length yet (normal for the first
@@ -127,6 +150,44 @@
         }
     }
 
+    // Smooths a raw video.paused reading into confirmedPaused. Turning false is applied
+    // instantly -- responsiveness on resume matters, and there's no equivalent transient-
+    // false artifact to guard against. Turning true only takes effect once it's held for
+    // PAUSE_DEBOUNCE_MS, which is what filters out YT Music's own transient pause-then-play
+    // blip on a track switch: the blip never holds that long, so confirmedPaused never
+    // flips, and the "resolves to the next track" event that follows moments later cancels
+    // this timer before it fires. Re-reads live state when the timer fires rather than
+    // trusting the closed-over reading, in case the page swapped in a new <video> element
+    // (or metadata) in the meantime.
+    function updatePauseConfirmation(rawPaused) {
+        if (!rawPaused) {
+            if (pauseDebounceTimer !== null) {
+                clearTimeout(pauseDebounceTimer);
+                pauseDebounceTimer = null;
+                // console.log('[YT Music RPC Bridge] pause candidate cancelled -- resumed before confirming (this is the track-swap blip being filtered out)');
+            }
+            confirmedPaused = false;
+            return;
+        }
+        if (confirmedPaused || pauseDebounceTimer !== null) return;
+        // console.log(`[YT Music RPC Bridge] possible pause detected, confirming in ${PAUSE_DEBOUNCE_MS}ms...`);
+        pauseDebounceTimer = setTimeout(() => {
+            pauseDebounceTimer = null;
+            const state = readMetadata();
+            if (state && state.video.paused) {
+                confirmedPaused = true;
+                // console.log('[YT Music RPC Bridge] pause confirmed as real, reporting it');
+                evaluate(false); // re-run now that the confirmed state has actually changed
+            } // else {
+                // Resolved back to playing without a 'play'/'loadedmetadata' event having
+                // fired in between to log the cancellation above -- catch it here instead,
+                // so every pause candidate logs a resolution one way or the other.
+                
+                // console.log('[YT Music RPC Bridge] pause candidate resolved before confirming (caught on re-check, no cancelling event fired)');
+            // }
+        }, PAUSE_DEBOUNCE_MS);
+    }
+
     // Decides whether current state is worth sending. force=true skips the change check --
     // used for seeks, where currentTime moves but title/artist/album/paused all stay
     // identical, so the normal check would otherwise miss it until the next heartbeat.
@@ -134,7 +195,8 @@
         const state = readMetadata();
         if (!state) return;
 
-        const paused = state.video.paused;
+        updatePauseConfirmation(state.video.paused);
+        const paused = confirmedPaused;
         const changed = state.title !== lastSent.title || state.artist !== lastSent.artist ||
                         state.album !== lastSent.album || paused !== lastSent.paused;
         const dueForHeartbeat = Date.now() - lastSentAt > HEARTBEAT_MS;
@@ -158,7 +220,8 @@
     // stream has buffered -- 'durationchange' fires exactly then. force=true because
     // title/artist/album/paused haven't changed at that point, so the normal check
     // would otherwise miss it and leave Discord showing no length until the next
-    // heartbeat (up to 15s later) -- that's the "length doesn't show" bug.
+    // heartbeat cycle (HEARTBEAT_MS, plus up to POLL_INTERVAL_MS of poll jitter) --
+    // that's the "length doesn't show" bug.
     document.addEventListener('durationchange', () => evaluate(true), true);
 
     // Catch whatever's already playing at inject time (e.g. script loads mid-song on a
